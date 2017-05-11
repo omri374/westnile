@@ -1,0 +1,193 @@
+---
+title: "West-Nile"
+author: "Omri Mendels"
+date: "May 7, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(dplyr)
+library(ggplot2)
+library(gridExtra)
+library(reshape2)
+```
+
+# This markdown page shows some interesting statistics about the West Nile dataset.
+
+```{r data, echo = F}
+source("src/dataprep.R",echo = F,verbose = F)
+train <- getDataset()
+
+numericCols <- sapply(train,is.numeric)
+categoricalCols <- sapply(train,function(x){!is.numeric(x)})
+nonFeatures <- c("Date","Label","Address","sprayed2011","sprayed2013","closestStation","Street","AddressNumberAndStreet","AddressAccuracy")
+featureset <- train[,setdiff(names(train),nonFeatures)]
+
+```
+## Distribution of various variables given Wmv-positive (blue) or negative (red)
+```{r density, echo = F, fig.width=20, fig.height=20}
+
+par(mfrow = c(3, 3))
+
+interesting <- c("year","NumMosquitos","Tmax","PrecipTotal","DewPoint","ResultSpeed","ResultDir","week","Heat","Species")
+
+
+trainNumeric <- featureset[,interesting]
+trainNumeric$Label <- as.factor(train$Label)
+trainNumericS <- trainNumeric[sample(1:nrow(trainNumeric),replace = F,size =nrow(trainNumeric)*0.4),]
+trainNumericS$PrecipTotal <- ifelse(trainNumericS$PrecipTotal > 0.4,0.4,trainNumericS$PrecipTotal)
+trainNumericS$Heat <- ifelse(trainNumericS$Heat > 4,4,trainNumericS$Heat)
+#ggplot(trainMelt, aes(x = variable, y = value)) + geom_density(alpha = 0.3)
+
+plotsList <- lapply(colnames(trainNumericS), function(i) {
+  if(is.numeric(trainNumericS[,i])){
+    ggplot(trainNumericS, aes_string(x=i, fill = "Label")) + 
+      geom_density(alpha = 0.3,adjust = 0.4) +
+      guides(fill=FALSE) +
+      scale_y_continuous(name = "",labels = function(x) as.character(round(x,2)))
+    #facet_wrap(~ variable)
+    #return(g)
+  } else{
+    ggplot(trainNumericS, aes_string(x=i, fill = "Label")) + 
+      geom_bar() +guides(fill=FALSE) +theme(axis.text.x = element_text(angle = 45, hjust = 1))
+  }
+})
+do.call(grid.arrange, c(plotsList, ncol=3))
+
+
+```
+
+``` {r pairs, echo = F, fig.width=20, fig.height=20}
+source("src/makePairs.R")
+
+scaled <- data.frame(sapply(trainNumericS[,-c(10,11)],function(x){return((x - min(x,na.rm = T)) / (max(x,na.rm = T) - min(x,na.rm = T)))}))
+pairs <- makePairs(scaled)
+
+# new data frame mega
+mega <- data.frame(pairs$all, Label=rep(trainNumericS$Label, length=nrow(pairs$all)))
+
+
+# pairs plot
+ggplot(mega, aes_string(x = "x", y = "y")) + 
+  facet_grid(xvar ~ yvar, scales = "free") + 
+  geom_point(aes(colour=Label), na.rm = TRUE, alpha=0.3,size = 1) + 
+  stat_density(aes(x = x, y = ..scaled.. * diff(range(x)) + min(x)), 
+               data = pairs$densities, position = "identity", 
+               colour = "grey20", geom = "line") +
+  theme(axis.text.y=element_blank(),axis.text.x=element_blank())
+
+```
+```{r convexhull}
+    #Convex hull
+    library(leaflet)
+    
+    wnvPositive <- train[which(train$Label==1),]
+    wnvNegative <- train[which(train$Label==0),]
+    chpositive <- wnvPositive[chull(wnvPositive$Longitude,wnvPositive$Latitude),]
+    
+    chnegative <- wnvNegative[chull(wnvNegative$Longitude,wnvNegative$Latitude),]
+    m2 = leaflet(chnegative) %>% addTiles() %>% addPolygons(
+      chpositive$Longitude, chpositive$Latitude,color ="red",opacity = 0.5) %>% addPolygons(
+        chnegative$Longitude, chnegative$Latitude,color = "blue",opacity = 0.5) 
+    m2
+    
+```
+```{r clustering, echo = F, fig.width=20, fig.height=20}
+  library(fpc)
+  library(ggmap)
+  EPS <- 0.15
+  MINPTS <- 5
+  
+  sprays <- read.csv("input/spray.csv",stringsAsFactors = F)
+  
+  grpByLocation <- train %>% 
+    group_by(Latitude, Longitude) %>% 
+    summarize(totalNumMosquitos = sum(NumMosquitos),Label = sum(as.numeric(Label)) > 1)
+  
+  chi <- get_map("Chicago")
+  library(fossil)
+  lats <- cbind(grpByLocation$Longitude,grpByLocation$Latitude)
+  dist <- earth.dist(lats,dist = T)
+  
+  #dbsc <- dbscan(data.frame(lat = grpByLocation$Latitude,lon = grpByLocation$Longitude),eps = .02,minPts = 1)
+  hcl <- hclust(d = dist,method = "complete")
+  clusters <- cutree(hcl,h = 4)
+  
+  grpByLocation$cluster <-clusters
+  chullList <- list()
+  for(i in 1 :length(levels(as.factor(clusters)))){
+    coords <- grpByLocation %>% filter(cluster == i) %>% data.frame()
+    chullList[[i]] <- coords[chull(coords),]
+  }
+  chull <- bind_rows(chullList)
+  
+  head(grpByLocation)
+  #plot map with clusters
+  
+  sprays2007 <- sprays %>% filter(year(Date) == 2007)
+  spraylats <- cbind(sprays$Longitude,sprays$Latitude)
+  
+  spraydist <- earth.dist(spraylats,dist = T)
+  sprayshclust <- hclust(d = spraydist,method = "complete")
+  sprayclusters <- cutree(sprayshclust,h = 0.5)
+  spraysClst <- sprays %>% group_by(Latitude, Longitude) %>% summarize(co <- n())
+  
+  library(ggmap)
+  g <- ggmap(chi) + 
+    geom_point(aes(x = Longitude, y = Latitude),data = spraysGrp,alpha = 0.5, size = 0.01,color = "yellow") + 
+    geom_polygon(aes(x= Longitude, y = Latitude, group = as.factor(cluster)),data =chull) + 
+    geom_point(aes(x = Longitude, y = Latitude,color = as.factor(Label)),data = grpByLocation) + 
+    
+    
+    theme(legend.position = "none")
+  g
+
+
+```
+
+```{r numMosquitos, echo = F, fig.width=20, fig.height=20}
+ #NumMosquitos
+  ggplot(train, aes(x=NumMosquitos)) +
+    geom_histogram() + facet_grid(Label~.)
+  
+  
+```
+
+```{r species, echo = F, fig.width=20, fig.height=20}
+
+  #species
+  library(grid)
+  g1 <- ggplot(train, aes(x=SpeciesCULEX.PIPIENS,fill = Label)) +  geom_bar()
+  g2 <- ggplot(train, aes(x=SpeciesCULEX.SALINARIUS,fill = Label)) +  geom_bar() 
+  g3 <- ggplot(train, aes(x=SpeciesCULEX.PIPIENS.RESTUANS,fill = Label)) +  geom_bar() 
+  g4 <- ggplot(train, aes(x=SpeciesCULEX.TARSALIS,fill = Label)) +  geom_bar() 
+  g5 <- ggplot(train, aes(x=SpeciesCULEX.RESTUANS,fill = Label)) +  geom_bar() 
+  g6 <- ggplot(train, aes(x=SpeciesCULEX.TERRITANS,fill = Label)) +  geom_bar() 
+  grid.arrange(g1,g2,g3,g4,g5,g6,ncol = 3)
+  
+```
+```{r traps}
+  trapSpeciesGrp <- train %>% group_by(Trap, Species,Label, year) %>% 
+    summarize(count = n(), numMosquitosSTD = sd(NumMosquitos)) %>% arrange(desc(labelSTD))
+  trapSpeciesGrp$Trap <- as.factor(trapSpeciesGrp$Trap)
+  trapSpeciesGrp$WNV <- ifelse(trapSpeciesGrp$Label==0,FALSE,TRUE)
+  
+  stdPerYear <- trapSpeciesGrp %>% group_by(WNV) %>% summarize(meanSTD = mean(numMosquitosSTD,na.rm = T)) %>% arrange(year)
+  knitr::kable(stdPerYear)
+  
+  
+  library(ggplot2)
+  library(scales)
+  species <- unlist(trapSpeciesGrp[1:50,'Species'])
+  trap <- unlist(trapSpeciesGrp[1:50,'Trap'])
+  df <- train %>% filter(year == 2007) %>% filter(species %in% species & Trap %in% trap)
+  ggplot(df, aes(as.Date(Date), NumMosquitos,colour = Trap)) + geom_line() +
+    scale_x_date(date_breaks = "1 year") + xlab("") + ylab("Num of mosquitos")+
+    facet_grid(wnvPositive~.) + 
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + ggplot2::ggtitle("Top 50 traps with the heighest variance of number of mosquitos")
+  
+  library(gridExtra)
+  grid.arrange(glist[[1]],glist[[2]],glist[[3]],glist[[4]],glist[[5]])
+  
+```
