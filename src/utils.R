@@ -1,3 +1,8 @@
+to.radians <- function(degree) {
+  return(degree * pi / 180)
+}
+
+
 dist.between.latlong.points <- function (long1, lat1, long2, lat2)
 {
   Radius <- 6371
@@ -9,10 +14,6 @@ dist.between.latlong.points <- function (long1, lat1, long2, lat2)
   d <- Radius * c
   
   return(d[1])
-}
-
-to.radians <- function(degree) {
-  return(degree * pi / 180)
 }
 
 haversine <- Vectorize(dist.between.latlong.points)
@@ -96,4 +97,11 @@ mode <- function(x,rm.na = F) {
     ux <- unique(x)
   }
   ux[which.max(tabulate(match(x, ux)))]
+}
+
+getAUC <- function(prob,label){
+  library(ROCR)
+  pred <- prediction(prob[,2], label=="Yes")
+  perf <- performance(prediction.obj = pred,measure = "auc")
+  unlist(perf@y.values)
 }

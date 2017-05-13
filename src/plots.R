@@ -1,8 +1,7 @@
-library(dplyr)
 library(ggplot2)
 library(gridExtra)
 library(reshape2)
-
+library(dplyr)
 
 source("src/dataprep.R",echo = F,verbose = F)
 train <- getDataset()
@@ -42,7 +41,7 @@ densityPlot <- function(){
         #geom_density(alpha = 0.3,adjust = 0.4) +
         geom_histogram(alpha = 0.9,bins = 20) +
         guides(fill=FALSE) +
-        scale_y_continuous(name = "",WnvPresents = function(x) as.character(round(x,2))) + ggtitle(paste("Distribution of", i))
+        scale_y_continuous(name = "",labels = function(x) as.character(round(x,2))) + ggtitle(paste("Distribution of", i))
       #facet_wrap(~ variable)
       #return(g)
     } else{
@@ -73,6 +72,7 @@ savePairsPlot <- function(df,var1,var2){
   
 }
 
+##Saves to file a density plot for each variable given the label
 pairsPlot<- function(){
   
   
@@ -80,7 +80,7 @@ pairsPlot<- function(){
   numeric <- sapply(featuresetS,is.numeric)
   nonNumeric <- !numeric
   scaled <- data.frame(sapply(featuresetS[,numeric],function(x){return((x - min(x,na.rm = T)) / (max(x,na.rm = T) - min(x,na.rm = T)))}))
-  dataset <- bind_cols(scaled,f
+  dataset <- bind_cols(scaled,featuresetS[,nonNumeric])
   
   dir.create("output/pairs")
   
@@ -137,9 +137,8 @@ convexHullPlot <- function(){
   
 }
 clusterPlot <- function(reqYear = 2013){
-  library(fpc)
   library(ggmap)
-
+  
   sprays <- read.csv("input/spray.csv",stringsAsFactors = F)
   
   grpByLocation <- train %>% filter(year == reqYear) %>%
@@ -219,28 +218,26 @@ trapsStatisticsPlot <- function(){
   
   library(ggplot2)
   library(scales)
-  species <- unlist(trapSpeciesGrp[1:5,'Species'])
-  trap <- unlist(trapSpeciesGrp[1:5,'Trap'])
+  species <- unlist(trapSpeciesGrp[1:50,'Species'])
+  trap <- unlist(trapSpeciesGrp[1:50,'Trap'])
   df <- train %>% filter(species %in% as.character(species) & Trap %in% as.character(trap))
   
+  dfgrp <- df %>% group_by(Trap,year) %>% summarize(AvgNumMosquitos = sum(NumMosquitos),WnvPresent = any(WnvPresent == "Yes"))
   
   
-  
-  ggplot(df, aes(Date, NumMosquitos,colour = Trap)) + geom_line() +
-    scale_x_date(date_breaks = "1 year") + xlab("") + ylab("Num of mosquitos")+
+  ggplot(dfgrp, aes(year, AvgNumMosquitos,colour = Trap)) + geom_line() +
+    #scale_x_date(date_breaks = "1 year") + 
+    xlab("") + ylab("Num of mosquitos (log)") + scale_y_log10()  + 
     facet_grid(WnvPresent~.) + 
-    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + ggplot2::ggtitle("Top 50 traps with the heighest variance of number of mosquitos")
-  
-  library(gridExtra)
-  grid.arrange(glist[[1]],glist[[2]],glist[[3]],glist[[4]],glist[[5]])
-  
+    theme(axis.text.x = element_text(angle = 45, hjust = 1)) + 
+    ggplot2::ggtitle("Top 50 traps with the heighest variance of number of mosquitos")
 }
 
 
 
 
 getPredictionStates <- function(classPrediction, probPrediction, Label, fittedModel,withTuning = T){
-
+  
   varImp <- plot(varImp(fittedModel))
   if(withTuning){
     modelPlot <- plot(fittedModel)
@@ -248,7 +245,7 @@ getPredictionStates <- function(classPrediction, probPrediction, Label, fittedMo
     modelPlot <- NULL
   }
   roc <- plotROC(probPrediction,Label,fittedModel)
- 
+  
   return(list(varImp,modelPlot,roc))
 }
 
